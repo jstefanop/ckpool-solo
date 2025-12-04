@@ -1,5 +1,5 @@
 /*
- * Copyright 2014-2020,2023 Con Kolivas
+ * Copyright 2014-2020,2023,2025 Con Kolivas
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -433,6 +433,10 @@ retry:
 		LOGWARNING("Listener received reject message, rejecting clients");
 		send_proc(ckp->connector, "reject");
 		send_unix_msg(sockd, "rejecting");
+	} else if (cmdmatch(buf, "dropall")) {
+		LOGWARNING("Listener received dropall message, disconnecting all clients");
+		send_proc(ckp->stratifier, buf);
+		send_unix_msg(sockd, "dropping all");
 	} else if (cmdmatch(buf, "reconnect")) {
 		LOGWARNING("Listener received request to send reconnect to clients");
 		send_proc(ckp->stratifier, buf);
@@ -1452,6 +1456,9 @@ static void parse_config(ckpool_t *ckp)
 		sscanf(vmask, "%x", &ckp->version_mask);
 	else
 		ckp->version_mask = 0x1fffe000;
+
+	/* Default don't drop idle clients */
+	json_get_int(&ckp->dropidle, json_conf, "dropidle");
 	/* Look for an array first and then a single entry */
 	arr_val = json_object_get(json_conf, "serverurl");
 	if (!parse_serverurls(ckp, arr_val)) {
@@ -1688,9 +1695,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (!ckp.btcsolo)
-		LOGWARNING("WARNING: Starting solo code in non-solo mode!");
-
 	if (!ckp.name) {
 		if (ckp.node)
 			ckp.name = "cknode";
@@ -1758,7 +1762,7 @@ int main(int argc, char **argv)
 	ckp.tndonaddress = "tb1q5fyv7tue73y4zxezh2c685qpwx0cfngfxlrgxh";
 	ckp.rtdonaddress = "bcrt1qlk935ze2fsu86zjp395uvtegztrkaezawxx0wf";
 
-	if (!ckp.btcaddress && !ckp.btcsolo)
+	if (!ckp.btcaddress && !ckp.btcsolo && !ckp.proxy)
 		quit(0, "Non solo mining must have a btcaddress in config, aborting!");
 	if (!ckp.blockpoll)
 		ckp.blockpoll = 100;
@@ -1796,12 +1800,6 @@ int main(int argc, char **argv)
 	ret = mkdir(ckp.logdir, 0750);
 	if (ret && errno != EEXIST)
 		quit(1, "Failed to make log directory %s", ckp.logdir);
-
-	/* Create the workers logdir */
-	sprintf(buf, "%s/workers", ckp.logdir);
-	ret = mkdir(buf, 0750);
-	if (ret && errno != EEXIST)
-		quit(1, "Failed to make workers log directory %s", buf);
 
 	/* Create the user logdir */
 	sprintf(buf, "%s/users", ckp.logdir);
